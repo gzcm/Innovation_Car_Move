@@ -57,22 +57,28 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define KEY1_Pin GPIO_PIN_0
+#define KEY1_GPIO_Port GPIOC
 #define ENCODER_L_B_Pin GPIO_PIN_0
 #define ENCODER_L_B_GPIO_Port GPIOA
 #define ENCODER_L_A_Pin GPIO_PIN_1
 #define ENCODER_L_A_GPIO_Port GPIOA
-#define MOTOR_L_IN1_Pin GPIO_PIN_13
-#define MOTOR_L_IN1_GPIO_Port GPIOE
-#define MOTOR_L_IN2_Pin GPIO_PIN_14
-#define MOTOR_L_IN2_GPIO_Port GPIOE
 #define ENCODER_R_A_Pin GPIO_PIN_12
 #define ENCODER_R_A_GPIO_Port GPIOD
 #define ENCODER_R_B_Pin GPIO_PIN_13
 #define ENCODER_R_B_GPIO_Port GPIOD
-#define MOTOR_R_IN1_Pin GPIO_PIN_14
-#define MOTOR_R_IN1_GPIO_Port GPIOD
-#define MOTOR_R_IN2_Pin GPIO_PIN_15
-#define MOTOR_R_IN2_GPIO_Port GPIOD
+#define PWM_R_Pin GPIO_PIN_6
+#define PWM_R_GPIO_Port GPIOC
+#define PWM_L_Pin GPIO_PIN_7
+#define PWM_L_GPIO_Port GPIOC
+#define MOTOR_R_IN2_Pin GPIO_PIN_8
+#define MOTOR_R_IN2_GPIO_Port GPIOC
+#define MOTOR_L_IN2_Pin GPIO_PIN_9
+#define MOTOR_L_IN2_GPIO_Port GPIOC
+#define MOTOR_R_IN1_Pin GPIO_PIN_8
+#define MOTOR_R_IN1_GPIO_Port GPIOA
+#define MOTOR_L_IN1_Pin GPIO_PIN_15
+#define MOTOR_L_IN1_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 

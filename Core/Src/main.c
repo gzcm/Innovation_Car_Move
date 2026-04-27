@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "OLED.h"
 #include "tb6612.h"
+#include "button.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,22 +50,23 @@
 static TB6612_HandleTypeDef hTB6612 = {
     .htim             = &htim3,
     .left = {
-        .in1_port        = MOTOR_L_IN1_GPIO_Port,
-        .in1_pin         = MOTOR_L_IN1_Pin,
-        .in2_port        = MOTOR_L_IN2_GPIO_Port,
-        .in2_pin         = MOTOR_L_IN2_Pin,
-        .pwm_channel     = TIM_CHANNEL_1,
-        .forward_polarity = 1,
+		.in1_port        = MOTOR_L_IN1_GPIO_Port,
+		.in1_pin         = MOTOR_L_IN1_Pin,
+		.in2_port        = MOTOR_L_IN2_GPIO_Port,
+		.in2_pin         = MOTOR_L_IN2_Pin,
+		.pwm_channel     = TIM_CHANNEL_2,
+		.forward_polarity = 1,
     },
     .right = {
-        .in1_port        = MOTOR_R_IN1_GPIO_Port,
-        .in1_pin         = MOTOR_R_IN1_Pin,
-        .in2_port        = MOTOR_R_IN2_GPIO_Port,
-        .in2_pin         = MOTOR_R_IN2_Pin,
-        .pwm_channel     = TIM_CHANNEL_2,
-        .forward_polarity = 1,
+		.in1_port        = MOTOR_R_IN1_GPIO_Port,
+		.in1_pin         = MOTOR_R_IN1_Pin,
+		.in2_port        = MOTOR_R_IN2_GPIO_Port,
+		.in2_pin         = MOTOR_R_IN2_Pin,
+		.pwm_channel     = TIM_CHANNEL_1,
+		.forward_polarity = 1,
     },
 };
+
 
 /* USER CODE END PV */
 
@@ -116,13 +118,16 @@ int main(void)
   /* USER CODE BEGIN 2 */
   OLED_Init(&hi2c2);
   TB6612_Init(&hTB6612);
-  TB6612_SetMotorPair(&hTB6612, 50, 50);
+  OLED_ShowString(1, 1, "TB6612 Init!");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  if(Button_CheckToggleRequest()){
+		  TB6612_SetMotorPair(&hTB6612, 0, -25);
+	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

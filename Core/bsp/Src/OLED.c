@@ -204,7 +204,7 @@ void OLED_ShowBinNum(uint8_t Line, uint8_t Column, uint32_t Number, uint8_t Leng
 void OLED_Init(I2C_HandleTypeDef *hi2c)
 {
 	oled_hi2c = hi2c;
-	HAL_Delay(1);				//上电延时
+	HAL_Delay(100);				//上电延时，等待 SSD1306 内部电路稳定
 
 	OLED_WriteCommand(0xAE);	//关闭显示
 	
