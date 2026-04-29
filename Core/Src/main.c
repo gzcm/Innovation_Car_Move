@@ -27,6 +27,8 @@
 #include "OLED.h"
 #include "tb6612.h"
 #include "button.h"
+#include "encoder.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,7 +38,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define ENCODER_SAMPLE_TIME_S               (0.02f)
+#define ENCODER_PULSES_PER_REVOLUTION       (2040.0f)
+#define ENCODER_LEFT_POLARITY               (1)
+#define ENCODER_RIGHT_POLARITY              (1)
+#define ENCODER_SPEED_FILTER_ALPHA          (0.3f)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -67,6 +73,16 @@ static TB6612_HandleTypeDef hTB6612 = {
     },
 };
 
+/* 编码器句柄：TIM2左轮，TIM4右轮，TIM1提供50Hz采样中断 */
+static Encoder_HandleTypeDef hEncoder = {
+    .left_htim      = &htim2,
+    .right_htim     = &htim4,
+    .left_polarity  = ENCODER_LEFT_POLARITY,
+    .right_polarity = ENCODER_RIGHT_POLARITY,
+    .sample_time_s  = ENCODER_SAMPLE_TIME_S,
+    .pulses_per_rev = ENCODER_PULSES_PER_REVOLUTION,
+    .filter_alpha   = ENCODER_SPEED_FILTER_ALPHA,
+};
 
 /* USER CODE END PV */
 
@@ -119,14 +135,36 @@ int main(void)
   OLED_Init(&hi2c2);
   TB6612_Init(&hTB6612);
   OLED_ShowString(1, 1, "TB6612 Init!");
+  Encoder_Init(&hEncoder);
+  HAL_TIM_Base_Start_IT(&htim1);   /* 启动TIM1，50Hz中断触发 Encoder_Update */
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  /* ====== 编码器速度显示测试 ====== */
+	  {
+		  static uint32_t last_tick = 0;
+		  static char disp_buf[17];
+		  if (HAL_GetTick() - last_tick >= 200) {
+			  last_tick = HAL_GetTick();
+			  Encoder_SpeedSample spd = Encoder_GetSpeedSample(&hEncoder);
+
+			  snprintf(disp_buf, sizeof(disp_buf), "L:%5d %5.1f rps",
+					  spd.left_delta_count, (double)spd.left_speed_rps);
+			  OLED_ShowString(2, 1, disp_buf);
+
+			  snprintf(disp_buf, sizeof(disp_buf), "R:%5d %5.1f rps",
+					  spd.right_delta_count, (double)spd.right_speed_rps);
+			  OLED_ShowString(3, 1, disp_buf);
+		  }
+	  }
+	  /* ================================= */
+
 	  if(Button_CheckToggleRequest()){
-		  TB6612_SetMotorPair(&hTB6612, 0, -25);
+		  TB6612_SetMotorPair(&hTB6612, -25, -25);
+
 	  }
     /* USER CODE END WHILE */
 
@@ -175,6 +213,14 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/* TIM1 周期中断回调，每20ms调用一次编码器更新 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM1) {
+        Encoder_Update(&hEncoder);
+    }
+}
 
 /* USER CODE END 4 */
 

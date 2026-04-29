@@ -265,7 +265,7 @@ void HAL_TIM_Encoder_MspInit(TIM_HandleTypeDef* tim_encoderHandle)
     PA0-WKUP     ------> TIM2_CH1
     PA1     ------> TIM2_CH2
     */
-    GPIO_InitStruct.Pin = ENCODER_L_B_Pin|ENCODER_L_A_Pin;
+    GPIO_InitStruct.Pin = ENCODER_L_A_Pin|ENCODER_L_B_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -287,7 +287,7 @@ void HAL_TIM_Encoder_MspInit(TIM_HandleTypeDef* tim_encoderHandle)
     PD12     ------> TIM4_CH1
     PD13     ------> TIM4_CH2
     */
-    GPIO_InitStruct.Pin = ENCODER_R_A_Pin|ENCODER_R_B_Pin;
+    GPIO_InitStruct.Pin = ENCODER_R_B_Pin|ENCODER_R_A_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
@@ -373,7 +373,7 @@ void HAL_TIM_Encoder_MspDeInit(TIM_HandleTypeDef* tim_encoderHandle)
     PA0-WKUP     ------> TIM2_CH1
     PA1     ------> TIM2_CH2
     */
-    HAL_GPIO_DeInit(GPIOA, ENCODER_L_B_Pin|ENCODER_L_A_Pin);
+    HAL_GPIO_DeInit(GPIOA, ENCODER_L_A_Pin|ENCODER_L_B_Pin);
 
   /* USER CODE BEGIN TIM2_MspDeInit 1 */
 
@@ -391,7 +391,7 @@ void HAL_TIM_Encoder_MspDeInit(TIM_HandleTypeDef* tim_encoderHandle)
     PD12     ------> TIM4_CH1
     PD13     ------> TIM4_CH2
     */
-    HAL_GPIO_DeInit(GPIOD, ENCODER_R_A_Pin|ENCODER_R_B_Pin);
+    HAL_GPIO_DeInit(GPIOD, ENCODER_R_B_Pin|ENCODER_R_A_Pin);
 
   /* USER CODE BEGIN TIM4_MspDeInit 1 */
 

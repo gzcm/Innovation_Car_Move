@@ -59,14 +59,14 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define KEY1_Pin GPIO_PIN_0
 #define KEY1_GPIO_Port GPIOC
-#define ENCODER_L_B_Pin GPIO_PIN_0
-#define ENCODER_L_B_GPIO_Port GPIOA
-#define ENCODER_L_A_Pin GPIO_PIN_1
+#define ENCODER_L_A_Pin GPIO_PIN_0
 #define ENCODER_L_A_GPIO_Port GPIOA
-#define ENCODER_R_A_Pin GPIO_PIN_12
-#define ENCODER_R_A_GPIO_Port GPIOD
-#define ENCODER_R_B_Pin GPIO_PIN_13
+#define ENCODER_L_B_Pin GPIO_PIN_1
+#define ENCODER_L_B_GPIO_Port GPIOA
+#define ENCODER_R_B_Pin GPIO_PIN_12
 #define ENCODER_R_B_GPIO_Port GPIOD
+#define ENCODER_R_A_Pin GPIO_PIN_13
+#define ENCODER_R_A_GPIO_Port GPIOD
 #define PWM_R_Pin GPIO_PIN_6
 #define PWM_R_GPIO_Port GPIOC
 #define PWM_L_Pin GPIO_PIN_7
