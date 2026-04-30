@@ -20,6 +20,7 @@
 #include "main.h"
 #include "i2c.h"
 #include "tim.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -28,6 +29,8 @@
 #include "tb6612.h"
 #include "button.h"
 #include "encoder.h"
+#include "pid.h"
+#include "vofa.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -42,7 +45,17 @@
 #define ENCODER_PULSES_PER_REVOLUTION       (2040.0f)
 #define ENCODER_LEFT_POLARITY               (1)
 #define ENCODER_RIGHT_POLARITY              (1)
-#define ENCODER_SPEED_FILTER_ALPHA          (0.3f)
+#define ENCODER_SPEED_FILTER_ALPHA          (0.5f)
+
+/* 速度 PI 初始参数（根据开环测量整定，后续按实测调整） */
+#define PID_KFF_LEFT    (24.8f)   /* 1 / 0.0403 rps/% */
+#define PID_KFF_RIGHT   (22.8f)   /* 1 / 0.0438 rps/% */
+#define PID_KP          (25.0f)
+#define PID_KI          (120.0f)  /* Kp/Ti，Ti ≈ 0.2s */
+
+/* 目标转速档位（rps），按键逐档切换 */
+static const float RPS_STEPS[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f };
+#define RPS_STEPS_LEN  (sizeof(RPS_STEPS) / sizeof(RPS_STEPS[0]))
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -83,6 +96,13 @@ static Encoder_HandleTypeDef hEncoder = {
     .pulses_per_rev = ENCODER_PULSES_PER_REVOLUTION,
     .filter_alpha   = ENCODER_SPEED_FILTER_ALPHA,
 };
+
+static SpeedPI_t hPidLeft;
+static SpeedPI_t hPidRight;
+/* 目标转速，主循环写入，TIM1 中断读取 */
+static volatile float target_rps = 0.0f;
+/* VOFA 发送标志，TIM1 中断置位，主循环发送 */
+static volatile uint8_t vofa_pending = 0;
 
 /* USER CODE END PV */
 
@@ -131,40 +151,73 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM1_Init();
   MX_I2C2_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   OLED_Init(&hi2c2);
   TB6612_Init(&hTB6612);
-  OLED_ShowString(1, 1, "TB6612 Init!");
   Encoder_Init(&hEncoder);
-  HAL_TIM_Base_Start_IT(&htim1);   /* 启动TIM1，50Hz中断触发 Encoder_Update */
+  SpeedPI_Init(&hPidLeft,  PID_KFF_LEFT,  PID_KP, PID_KI, ENCODER_SAMPLE_TIME_S);
+  SpeedPI_Init(&hPidRight, PID_KFF_RIGHT, PID_KP, PID_KI, ENCODER_SAMPLE_TIME_S);
+  HAL_TIM_Base_Start_IT(&htim1);
+  OLED_ShowString(1, 1, "Speed PID Ctrl  ");
+  OLED_ShowString(2, 1, "Press btn start ");
+  OLED_ShowString(3, 1, "                ");
+  OLED_ShowString(4, 1, "                ");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  /* ====== 编码器速度显示测试 ====== */
+	  /* 按钮逐档切换目标转速：0 → 0.5 → 1.0 → 1.5 → 2.0 → 2.5 → 0 → ... */
+	  if (Button_CheckToggleRequest())
+	  {
+		  static uint8_t step = 0;
+		  step = (step + 1) % RPS_STEPS_LEN;
+		  target_rps = RPS_STEPS[step];
+		  if (target_rps == 0.0f) {
+			  SpeedPI_Reset(&hPidLeft);
+			  SpeedPI_Reset(&hPidRight);
+			  TB6612_StopAll(&hTB6612);
+		  }
+	  }
+
+	  /* VOFA 数据上发（由 TIM1 ISR 触发，约 50Hz） */
+	  if (vofa_pending) {
+		  vofa_pending = 0;
+		  Encoder_SpeedSample vofa_spd = Encoder_GetSpeedSample(&hEncoder);
+		  float vofa_data[5] = {
+			  target_rps,
+			  vofa_spd.left_speed_rps,
+			  vofa_spd.right_speed_rps,
+			  hPidLeft.output,
+			  hPidRight.output
+		  };
+		  VOFA_Send(vofa_data, 5);
+	  }
+
+	  /* OLED 刷新（约 5Hz） */
 	  {
 		  static uint32_t last_tick = 0;
 		  static char disp_buf[17];
-		  if (HAL_GetTick() - last_tick >= 200) {
+		  if (HAL_GetTick() - last_tick >= 200)
+		  {
 			  last_tick = HAL_GetTick();
 			  Encoder_SpeedSample spd = Encoder_GetSpeedSample(&hEncoder);
 
-			  snprintf(disp_buf, sizeof(disp_buf), "L:%5d %5.1f rps",
-					  spd.left_delta_count, (double)spd.left_speed_rps);
+			  snprintf(disp_buf, sizeof(disp_buf), "Tgt:%+6.2f rps   ", (double)target_rps);
+			  OLED_ShowString(1, 1, disp_buf);
+
+			  snprintf(disp_buf, sizeof(disp_buf), "L: %+7.3f rps   ", (double)spd.left_speed_rps);
 			  OLED_ShowString(2, 1, disp_buf);
 
-			  snprintf(disp_buf, sizeof(disp_buf), "R:%5d %5.1f rps",
-					  spd.right_delta_count, (double)spd.right_speed_rps);
+			  snprintf(disp_buf, sizeof(disp_buf), "R: %+7.3f rps   ", (double)spd.right_speed_rps);
 			  OLED_ShowString(3, 1, disp_buf);
+
+			  snprintf(disp_buf, sizeof(disp_buf), "L:%+4.0f R:%+4.0f  ",
+					  (double)hPidLeft.output, (double)hPidRight.output);
+			  OLED_ShowString(4, 1, disp_buf);
 		  }
-	  }
-	  /* ================================= */
-
-	  if(Button_CheckToggleRequest()){
-		  TB6612_SetMotorPair(&hTB6612, -25, -25);
-
 	  }
     /* USER CODE END WHILE */
 
@@ -214,11 +267,22 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-/* TIM1 周期中断回调，每20ms调用一次编码器更新 */
+/* TIM1 周期中断回调，每 20ms 更新编码器并执行速度闭环 */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM1) {
         Encoder_Update(&hEncoder);
+
+        float tgt = target_rps;
+        if (tgt == 0.0f) {
+            return;
+        }
+
+        Encoder_SpeedSample spd = Encoder_GetSpeedSample(&hEncoder);
+        int16_t pwm_l = (int16_t)SpeedPI_Update(&hPidLeft,  tgt, spd.left_speed_rps);
+        int16_t pwm_r = (int16_t)SpeedPI_Update(&hPidRight, tgt, spd.right_speed_rps);
+        TB6612_SetMotorPair(&hTB6612, pwm_l, pwm_r);
+        vofa_pending = 1;
     }
 }
 
