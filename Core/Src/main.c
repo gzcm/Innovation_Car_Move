@@ -1,4 +1,4 @@
-/* USER CODE BEGIN Header */
+﻿/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
@@ -31,6 +31,8 @@
 #include "encoder.h"
 #include "pid.h"
 #include "vofa.h"
+#include "track.h"
+#include "tracker.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -53,6 +55,7 @@
 #define PID_KP          (25.0f)
 #define PID_KI          (120.0f)  /* Kp/Ti，Ti ≈ 0.2s */
 
+#define TRACKER_K_TRACK  (0.3f)   /* 循迹增益，position → 差速转换 */
 /* 目标转速档位（rps），按键逐档切换 */
 static const float RPS_STEPS[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f };
 #define RPS_STEPS_LEN  (sizeof(RPS_STEPS) / sizeof(RPS_STEPS[0]))
@@ -158,6 +161,7 @@ int main(void)
   Encoder_Init(&hEncoder);
   SpeedPI_Init(&hPidLeft,  PID_KFF_LEFT,  PID_KP, PID_KI, ENCODER_SAMPLE_TIME_S);
   SpeedPI_Init(&hPidRight, PID_KFF_RIGHT, PID_KP, PID_KI, ENCODER_SAMPLE_TIME_S);
+  Tracker_Init(RPS_STEPS[1], TRACKER_K_TRACK);  /* 初始基础速度 0.5 rps */
   HAL_TIM_Base_Start_IT(&htim1);
   OLED_ShowString(1, 1, "Speed PID Ctrl  ");
   OLED_ShowString(2, 1, "Press btn start ");
@@ -175,6 +179,7 @@ int main(void)
 		  static uint8_t step = 0;
 		  step = (step + 1) % RPS_STEPS_LEN;
 		  target_rps = RPS_STEPS[step];
+		  Tracker_SetSpeed(target_rps);
 		  if (target_rps == 0.0f) {
 			  SpeedPI_Reset(&hPidLeft);
 			  SpeedPI_Reset(&hPidRight);
@@ -186,14 +191,20 @@ int main(void)
 	  if (vofa_pending) {
 		  vofa_pending = 0;
 		  Encoder_SpeedSample vofa_spd = Encoder_GetSpeedSample(&hEncoder);
-		  float vofa_data[5] = {
-			  target_rps,
-			  vofa_spd.left_speed_rps,
-			  vofa_spd.right_speed_rps,
-			  hPidLeft.output,
-			  hPidRight.output
+		  float vofa_pos = Track_GetPosition();
+		  float vofa_tgt_l, vofa_tgt_r;
+		  Tracker_Update(vofa_pos, &vofa_tgt_l, &vofa_tgt_r);
+		  float vofa_data[8] = {
+		      target_rps,
+		      vofa_pos,
+		      vofa_tgt_l,
+		      vofa_tgt_r,
+		      vofa_spd.left_speed_rps,
+		      vofa_spd.right_speed_rps,
+		      hPidLeft.output,
+		      hPidRight.output
 		  };
-		  VOFA_Send(vofa_data, 5);
+		  VOFA_Send(vofa_data, 8);
 	  }
 
 	  /* OLED 刷新（约 5Hz） */
@@ -214,8 +225,10 @@ int main(void)
 			  snprintf(disp_buf, sizeof(disp_buf), "R: %+7.3f rps   ", (double)spd.right_speed_rps);
 			  OLED_ShowString(3, 1, disp_buf);
 
-			  snprintf(disp_buf, sizeof(disp_buf), "L:%+4.0f R:%+4.0f  ",
-					  (double)hPidLeft.output, (double)hPidRight.output);
+			  Track_Data tr = Track_Read();
+        snprintf(disp_buf, sizeof(disp_buf), "Trk:%d%d%d%d p:%+.1f",
+			  tr.raw[0], tr.raw[1], tr.raw[2], tr.raw[3],
+			  (double)tr.position);
 			  OLED_ShowString(4, 1, disp_buf);
 		  }
 	  }
@@ -278,9 +291,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             return;
         }
 
+        /* 循迹差速：线偏移 → 左右速度目标 */
+        float position = Track_GetPosition();
+        float tgt_l, tgt_r;
+        Tracker_Update(position, &tgt_l, &tgt_r);
+
         Encoder_SpeedSample spd = Encoder_GetSpeedSample(&hEncoder);
-        int16_t pwm_l = (int16_t)SpeedPI_Update(&hPidLeft,  tgt, spd.left_speed_rps);
-        int16_t pwm_r = (int16_t)SpeedPI_Update(&hPidRight, tgt, spd.right_speed_rps);
+        int16_t pwm_l = (int16_t)SpeedPI_Update(&hPidLeft,  tgt_l, spd.left_speed_rps);
+        int16_t pwm_r = (int16_t)SpeedPI_Update(&hPidRight, tgt_r, spd.right_speed_rps);
         TB6612_SetMotorPair(&hTB6612, pwm_l, pwm_r);
         vofa_pending = 1;
     }
