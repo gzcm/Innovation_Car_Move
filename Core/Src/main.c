@@ -33,6 +33,7 @@
 #include "vofa.h"
 #include "track.h"
 #include "tracker.h"
+#include "HWT101.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -47,7 +48,7 @@
 #define ENCODER_PULSES_PER_REVOLUTION       (2040.0f)
 #define ENCODER_LEFT_POLARITY               (1)
 #define ENCODER_RIGHT_POLARITY              (1)
-#define ENCODER_SPEED_FILTER_ALPHA          (0.5f)
+#define ENCODER_SPEED_FILTER_ALPHA          (0.3f)
 
 /* 速度 PI 初始参数（根据开环测量整定，后续按实测调整） */
 #define PID_KFF_LEFT    (24.8f)   /* 1 / 0.0403 rps/% */
@@ -55,7 +56,7 @@
 #define PID_KP          (25.0f)
 #define PID_KI          (120.0f)  /* Kp/Ti，Ti ≈ 0.2s */
 
-#define TRACKER_K_TRACK  (0.3f)   /* 循迹增益，position → 差速转换 */
+#define TRACKER_K_TRACK  (0.6f)   /* 循迹增益，position → 差速转换 */
 /* 目标转速档位（rps），按键逐档切换 */
 static const float RPS_STEPS[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f };
 #define RPS_STEPS_LEN  (sizeof(RPS_STEPS) / sizeof(RPS_STEPS[0]))
@@ -155,6 +156,9 @@ int main(void)
   MX_TIM1_Init();
   MX_I2C2_Init();
   MX_USART1_UART_Init();
+  MX_USART2_UART_Init();
+  MX_UART5_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   OLED_Init(&hi2c2);
   TB6612_Init(&hTB6612);
@@ -162,6 +166,7 @@ int main(void)
   SpeedPI_Init(&hPidLeft,  PID_KFF_LEFT,  PID_KP, PID_KI, ENCODER_SAMPLE_TIME_S);
   SpeedPI_Init(&hPidRight, PID_KFF_RIGHT, PID_KP, PID_KI, ENCODER_SAMPLE_TIME_S);
   Tracker_Init(RPS_STEPS[1], TRACKER_K_TRACK);  /* 初始基础速度 0.5 rps */
+  HWT101_init(&huart2);    
   HAL_TIM_Base_Start_IT(&htim1);
   OLED_ShowString(1, 1, "Speed PID Ctrl  ");
   OLED_ShowString(2, 1, "Press btn start ");
@@ -173,6 +178,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  HWT101_Update();       
+
 	  /* 按钮逐档切换目标转速：0 → 0.5 → 1.0 → 1.5 → 2.0 → 2.5 → 0 → ... */
 	  if (Button_CheckToggleRequest())
 	  {
@@ -214,22 +221,16 @@ int main(void)
 		  if (HAL_GetTick() - last_tick >= 200)
 		  {
 			  last_tick = HAL_GetTick();
-			  Encoder_SpeedSample spd = Encoder_GetSpeedSample(&hEncoder);
+			  const HWT101_Data_t *imu = HWT101_GetData();
 
-			  snprintf(disp_buf, sizeof(disp_buf), "Tgt:%+6.2f rps   ", (double)target_rps);
+			  snprintf(disp_buf, sizeof(disp_buf), "Tgt:%+6.2f rps  ", (double)target_rps);
 			  OLED_ShowString(1, 1, disp_buf);
 
-			  snprintf(disp_buf, sizeof(disp_buf), "L: %+7.3f rps   ", (double)spd.left_speed_rps);
+			  snprintf(disp_buf, sizeof(disp_buf), "Yaw:%+7.1f deg  ", (double)imu->yaw);
 			  OLED_ShowString(2, 1, disp_buf);
 
-			  snprintf(disp_buf, sizeof(disp_buf), "R: %+7.3f rps   ", (double)spd.right_speed_rps);
+			  snprintf(disp_buf, sizeof(disp_buf), "Gz: %+7.1f d/s  ", (double)imu->gyroZ);
 			  OLED_ShowString(3, 1, disp_buf);
-
-			  Track_Data tr = Track_Read();
-        snprintf(disp_buf, sizeof(disp_buf), "Trk:%d%d%d%d p:%+.1f",
-			  tr.raw[0], tr.raw[1], tr.raw[2], tr.raw[3],
-			  (double)tr.position);
-			  OLED_ShowString(4, 1, disp_buf);
 		  }
 	  }
     /* USER CODE END WHILE */
