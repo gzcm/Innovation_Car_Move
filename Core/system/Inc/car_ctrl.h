@@ -14,7 +14,8 @@ typedef struct {
     void    (*set_motor_pwm)(int16_t left, int16_t right);
     void    (*motor_stop)(void);
     float   (*get_track_position)(void);
-    float   (*get_yaw)(void);          /* IMU Yaw 角（°），转弯角度外环 */
+    float   (*get_yaw)(void);          /* IMU Yaw 角（°） */
+    float   (*get_gyroZ)(void);        /* IMU Z 轴角速度（°/s），转弯 D 阻尼项 */
 } CarCtrl_Driver_t;
 
 /* PID 与循迹初始参数，由调用方传入 */
@@ -27,9 +28,10 @@ typedef struct {
     float sample_time_s;
     float base_rps;
     float k_track;
-    /* 转弯级联：角度外环 P → 目标轮速 → 复用轮速 SpeedPI 内环 */
-    float kp_turn_angle;   /* 外环增益（rps/°），err=90°→目标轮速 */
-    float rps_turn_max;    /* 目标轮速上限（rps），防止起转冲击 */
+    /* 转弯 PD：pwm = kp × angle_err - kd × gyroZ，直接驱动电机 */
+    float kp_turn_angle;   /* P 增益（PWM%/°） */
+    float kd_turn_gyro;    /* D 阻尼增益（PWM%/(°/s)），防止过冲振荡 */
+    float rps_turn_max;    /* 最大 PWM（%），取值 0~100 */
 } CarCtrl_Config_t;
 
 typedef enum {

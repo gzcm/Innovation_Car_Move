@@ -6,10 +6,10 @@
  *   - 调度控制环：编码器采样 → 模式分发 → 电机输出
  *   - 对上层暴露简洁接口，对下层通过注册的驱动回调访问硬件
  *
- * 转弯控制架构（角度外环 → 轮速内环级联）：
- *   外环 P：angle_err(°) × kp_turn_angle → target_rps，限幅 ±rps_turn_max
- *   内环 PI：复用 s_pid_left/s_pid_right（编码器反馈）→ pwm_l/pwm_r
- *   电机输出：左轮 +target_rps，右轮 -target_rps（原地旋转）
+ * 转弯控制架构（单环直接 P）：
+ *   angle_err(°) × kp_turn_angle → pwm（%），限幅 ±rps_turn_max（即最大 PWM%）
+ *   电机输出：左轮 +pwm，右轮 -pwm（原地旋转）
+ *   不经过 SpeedPI，避免积分在小目标下的振荡发散
  *
  * 控制环执行位置：
  *   update() 应在定时器 ISR 中以固定周期调用（与 sample_time_s 一致）
@@ -29,8 +29,9 @@
 static CarCtrl_Driver_t s_drv;
 static SpeedPI_t        s_pid_left;
 static SpeedPI_t        s_pid_right;
-static float            s_kp_angle    = 0.015f;
-static float            s_rps_max     = 1.0f;
+static float            s_kp_angle    = 1.0f;
+static float            s_kd_gyro     = 0.2f;
+static float            s_rps_max     = 40.0f;
 static CarMode_t        s_mode        = CAR_MODE_STOP;
 static CarCtrl_Diag_t   s_diag        = {0};
 static float            s_turn_target = 0.0f;
@@ -56,6 +57,7 @@ void CarCtrl_Init(CarCtrl_t *ctrl, const CarCtrl_Driver_t *drv, const CarCtrl_Co
     Tracker_Init(cfg->base_rps, cfg->k_track);
 
     s_kp_angle = cfg->kp_turn_angle;
+    s_kd_gyro  = cfg->kd_turn_gyro;
     s_rps_max  = cfg->rps_turn_max;
 
     ctrl->set_mode   = s_set_mode;
@@ -97,7 +99,7 @@ static void s_start_turn(int8_t dir)
     s_drv.motor_stop();
 
     float cur = s_drv.get_yaw();
-    s_turn_target = cur + (float)dir * 90.0f;
+    s_turn_target = cur - (float)dir * 90.0f;
     if (s_turn_target >  180.0f) s_turn_target -= 360.0f;
     if (s_turn_target <= -180.0f) s_turn_target += 360.0f;
 
@@ -120,9 +122,8 @@ static void s_update(void)
 
     if (s_mode == CAR_MODE_STOP) return;
 
-    /* ---- 转弯模式：角度外环 P + 轮速内环 PI ---- */
+    /* ---- 转弯模式：单环直接 P，angle_err(°) → PWM(%) ---- */
     if (s_mode == CAR_MODE_TURN) {
-        /* 外环：角度误差 → 目标轮速 */
         float angle_err = s_turn_target - s_drv.get_yaw();
         if (angle_err >  180.0f) angle_err -= 360.0f;
         if (angle_err <= -180.0f) angle_err += 360.0f;
@@ -135,16 +136,11 @@ static void s_update(void)
             return;
         }
 
-        float target_rps = s_kp_angle * angle_err;
-        if (target_rps >  s_rps_max) target_rps =  s_rps_max;
-        if (target_rps < -s_rps_max) target_rps = -s_rps_max;
-
-        /* 内环：复用轮速 SpeedPI，左轮正转、右轮反转实现原地旋转 */
-        float spd_l, spd_r;
-        s_drv.get_speeds(&spd_l, &spd_r);
-        float pwm_l = SpeedPI_Update(&s_pid_left,  +target_rps, spd_l);
-        float pwm_r = SpeedPI_Update(&s_pid_right, -target_rps, spd_r);
-        s_drv.set_motor_pwm((int16_t)pwm_l, (int16_t)pwm_r);
+        /* PD：P 驱动到位，D 阻尼防过冲 */
+        float pwm = s_kp_angle * angle_err - s_kd_gyro * s_drv.get_gyroZ();
+        if (pwm >  s_rps_max) pwm =  s_rps_max;
+        if (pwm < -s_rps_max) pwm = -s_rps_max;
+        s_drv.set_motor_pwm(-(int16_t)pwm, (int16_t)pwm);
         return;
     }
 

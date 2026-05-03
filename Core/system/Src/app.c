@@ -29,17 +29,18 @@
 #define TRACKER_K_TRACK  (0.6f)
 
 /*
- * 转弯级联参数
- *   TURN_KP_ANGLE：角度误差 → 目标轮速增益（rps/°）
- *     增大 → 到位更快但超调更大；建议从 0.010 开始观察
- *     err=90°时目标轮速 = 0.015×90 = 1.35 → 被 TURN_RPS_MAX 限幅
- *   TURN_RPS_MAX：限制最大轮速（rps），防止起转冲击
- *     建议不超过正常循迹速度，初始设 1.0f
+ * 转弯 PD 参数（pwm = kp × angle_err - kd × gyroZ，不经过 SpeedPI）
+ *   TURN_KP_ANGLE：P 增益（PWM%/°），err=90°→90% → 被限幅
+ *     建议从 1.0 开始；增大加快收敛，减小减少超调
+ *   TURN_KD_GYRO：D 阻尼增益（PWM%/(°/s)），抑制过冲振荡
+ *     建议从 0.2 开始；转到位后仍振荡则增大，运动迟钝则减小
+ *   TURN_PWM_MAX：最大 PWM（%），防止起转冲击，建议 40~60
  *
- * 若旋转方向反了：交换 car_ctrl.c TURN 分支中 +target_rps/-target_rps 的左右分配
+ * 若旋转方向反了：交换 car_ctrl.c TURN 分支 set_motor_pwm 的正负号
  */
-#define TURN_KP_ANGLE   (0.015f)  /* rps/°，err=90°→1.35→限幅 1.0 rps */
-#define TURN_RPS_MAX    (1.0f)    /* 转弯最大轮速（rps） */
+#define TURN_KP_ANGLE   (1.0f)    /* PWM%/°  */
+#define TURN_KD_GYRO    (0.2f)    /* PWM%/(°/s) */
+#define TURN_RPS_MAX    (40.0f)   /* 最大 PWM（%） */
 
 /* 目标转速档位（rps），按键逐档切换 */
 static const float RPS_STEPS[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f };
@@ -110,6 +111,11 @@ static float drv_get_yaw(void)
     return HWT101_GetData()->yaw;
 }
 
+static float drv_get_gyroZ(void)
+{
+    return HWT101_GetData()->gyroZ;
+}
+
 static const CarCtrl_Driver_t s_car_drv = {
     .encoder_update     = drv_encoder_update,
     .get_speeds         = drv_get_speeds,
@@ -117,6 +123,7 @@ static const CarCtrl_Driver_t s_car_drv = {
     .motor_stop         = drv_motor_stop,
     .get_track_position = Track_GetPosition,
     .get_yaw            = drv_get_yaw,
+    .get_gyroZ          = drv_get_gyroZ,
 };
 
 static const CarCtrl_Config_t s_car_cfg = {
@@ -128,6 +135,7 @@ static const CarCtrl_Config_t s_car_cfg = {
     .base_rps      = 0.5f,
     .k_track       = TRACKER_K_TRACK,
     .kp_turn_angle = TURN_KP_ANGLE,
+    .kd_turn_gyro  = TURN_KD_GYRO,
     .rps_turn_max  = TURN_RPS_MAX,
 };
 
@@ -212,8 +220,15 @@ void App_Update(void)
             snprintf(disp_buf, sizeof(disp_buf), "Yaw:%+7.1f deg  ", (double)imu->yaw);
             OLED_ShowString(2, 1, disp_buf);
 
-            snprintf(disp_buf, sizeof(disp_buf), "Gz: %+7.1f d/s  ", (double)imu->gyroZ);
-            OLED_ShowString(3, 1, disp_buf);
+            const char *mode_str;
+            switch (s_car_ctrl.get_mode()) {
+                case CAR_MODE_STOP:     mode_str = "Mode: STOP      "; break;
+                case CAR_MODE_STRAIGHT: mode_str = "Mode: STRAIGHT  "; break;
+                case CAR_MODE_TRACK:    mode_str = "Mode: TRACK     "; break;
+                case CAR_MODE_TURN:     mode_str = "Mode: TURNING   "; break;
+                default:                mode_str = "Mode: ???       "; break;
+            }
+            OLED_ShowString(3, 1, mode_str);
         }
     }
 }
