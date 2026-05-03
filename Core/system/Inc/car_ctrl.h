@@ -28,10 +28,11 @@ typedef struct {
     float sample_time_s;
     float base_rps;
     float k_track;
-    /* 转弯 PD：pwm = kp × angle_err - kd × gyroZ，直接驱动电机 */
-    float kp_turn_angle;   /* P 增益（PWM%/°） */
-    float kd_turn_gyro;    /* D 阻尼增益（PWM%/(°/s)），防止过冲振荡 */
-    float rps_turn_max;    /* 最大 PWM（%），取值 0~100 */
+    /* 转弯级联：Yaw PD 外环 → 差速 → SpeedPI 内环，叠加前进基速 */
+    float kp_turn_angle;   /* 外环 P 增益（rps/°） */
+    float kd_turn_gyro;    /* 外环 D 阻尼（rps/(°/s)），抑制过冲 */
+    float rps_turn_max;    /* 差速分量限幅（rps） */
+    float turn_fwd_rps;    /* 转弯时前进基速（rps），0 = 原地旋转 */
 } CarCtrl_Config_t;
 
 typedef enum {

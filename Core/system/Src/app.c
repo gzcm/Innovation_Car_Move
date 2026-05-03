@@ -29,18 +29,19 @@
 #define TRACKER_K_TRACK  (0.6f)
 
 /*
- * 转弯 PD 参数（pwm = kp × angle_err - kd × gyroZ，不经过 SpeedPI）
- *   TURN_KP_ANGLE：P 增益（PWM%/°），err=90°→90% → 被限幅
- *     建议从 1.0 开始；增大加快收敛，减小减少超调
- *   TURN_KD_GYRO：D 阻尼增益（PWM%/(°/s)），抑制过冲振荡
- *     建议从 0.2 开始；转到位后仍振荡则增大，运动迟钝则减小
- *   TURN_PWM_MAX：最大 PWM（%），防止起转冲击，建议 40~60
- *
- * 若旋转方向反了：交换 car_ctrl.c TURN 分支 set_motor_pwm 的正负号
+ * 转弯级联参数（Yaw PD 外环 → 目标轮速 → SpeedPI 内环）
+ *   TURN_KP_ANGLE：外环 P 增益（rps/°）
+ *     err=90° × 0.015 = 1.35 rps → 被 TURN_RPS_MAX 限幅
+ *     增大 → 响应快但易超调；建议从 0.010 开始观察
+ *   TURN_KD_GYRO：外环 D 阻尼（rps/(°/s)）
+ *     gyroZ=100°/s 时阻尼 = 0.003×100 = 0.3 rps
+ *     仍超调则增大；运动迟钝则减小
+ *   TURN_RPS_MAX：外环输出上限（rps），建议不超过正常循迹速度
  */
-#define TURN_KP_ANGLE   (1.0f)    /* PWM%/°  */
-#define TURN_KD_GYRO    (0.2f)    /* PWM%/(°/s) */
-#define TURN_RPS_MAX    (40.0f)   /* 最大 PWM（%） */
+#define TURN_KP_ANGLE   (0.015f)  /* rps/°  */
+#define TURN_KD_GYRO    (0.003f)  /* rps/(°/s) */
+#define TURN_RPS_MAX    (1.0f)    /* 差速限幅（rps） */
+#define TURN_FWD_RPS    (0.25f)    /* 转弯前进基速（rps），0 = 原地旋转 */
 
 /* 目标转速档位（rps），按键逐档切换 */
 static const float RPS_STEPS[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f };
@@ -137,6 +138,7 @@ static const CarCtrl_Config_t s_car_cfg = {
     .kp_turn_angle = TURN_KP_ANGLE,
     .kd_turn_gyro  = TURN_KD_GYRO,
     .rps_turn_max  = TURN_RPS_MAX,
+    .turn_fwd_rps  = TURN_FWD_RPS,
 };
 
 /* ---------- 公开接口 ---------- */
@@ -170,19 +172,24 @@ void App_Update(void)
         s_car_ctrl.set_mode(target_rps == 0.0f ? CAR_MODE_STOP : CAR_MODE_TRACK);
     }
 
-    /* 路口检测：四路全黑时触发 90° 右转（方向后续可按需修改）
-     * 双重保护：转弯期间不复位 + 触发后 2s 冷却，防止转弯期间或转弯后立即重触发 */
+    /* 路口检测：四路全黑时触发 90° 右转
+     * cross_armed 防重入：触发后锁定，转弯完成（mode 离开 TURN）后立即解锁
+     * 不依赖传感器离开全黑区，高速连续路口也能正常响应 */
     {
-        static uint8_t  cross_armed  = 1;
-        static uint32_t cooldown_end = 0;
+        static uint8_t cross_armed  = 1;
+        static uint8_t was_turning  = 0;
         int all_black = Track_IsAllBlack();
-        if (all_black && cross_armed && HAL_GetTick() >= cooldown_end) {
-            s_car_ctrl.start_turn(+1);
-            cross_armed  = 0;
-            cooldown_end = HAL_GetTick() + 2000;
-        }
-        if (!all_black && s_car_ctrl.get_mode() != CAR_MODE_TURN) {
+        CarMode_t mode = s_car_ctrl.get_mode();
+
+        /* 转弯刚完成（TURN → 其他）时立即解锁 */
+        if (was_turning && mode != CAR_MODE_TURN) {
             cross_armed = 1;
+        }
+        was_turning = (mode == CAR_MODE_TURN);
+
+        if (all_black && cross_armed) {
+            s_car_ctrl.start_turn(+1);
+            cross_armed = 0;
         }
     }
 
