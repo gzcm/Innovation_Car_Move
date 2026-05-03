@@ -62,3 +62,9 @@ float Track_GetPosition(void)
 {
     return Track_Read().position;
 }
+
+int Track_IsAllBlack(void)
+{
+    Track_Data d = Track_Read();
+    return d.raw[0] && d.raw[1] && d.raw[2] && d.raw[3];
+}

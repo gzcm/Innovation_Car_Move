@@ -21,6 +21,7 @@ typedef struct {
 void        Track_Init(void);
 Track_Data  Track_Read(void);
 float       Track_GetPosition(void);
+int         Track_IsAllBlack(void);  /* 四路全黑（路口）返回 1 */
 
 #ifdef __cplusplus
 }
