@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "HWT101.h"
+#include "esp8266_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -247,15 +248,23 @@ void UART5_IRQHandler(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART2) {
-    /* 由HWT101_UART_RxHandler处理接收完成事件 */
     HWT101_UART_RxHandler(huart);
+  }
+  if (huart->Instance == UART5) {
+    ESP8266_App_UartRxCpltCallback(huart);
+  }
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == UART5) {
+    ESP8266_App_UartTxCpltCallback(huart);
   }
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART2) {
-    /* 由HWT101_UART_ErrorHandler处理错误事件 */
     HWT101_UART_ErrorHandler(huart);
   }
 }

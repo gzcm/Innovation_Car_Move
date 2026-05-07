@@ -11,6 +11,7 @@
 #include "track.h"
 #include "HWT101.h"
 #include "car_ctrl.h"
+#include "esp8266_app.h"
 #include <stdio.h>
 
 /* ---------- 硬件参数 ---------- */
@@ -46,6 +47,9 @@
 /* 目标转速档位（rps），按键逐档切换 */
 static const float RPS_STEPS[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f };
 #define RPS_STEPS_LEN  (sizeof(RPS_STEPS) / sizeof(RPS_STEPS[0]))
+
+/* ESP8266 指令触发时的起步速度 */
+#define ESP8266_START_RPS  (0.75f)
 
 /* ---------- 硬件句柄 ---------- */
 static TB6612_HandleTypeDef hTB6612 = {
@@ -150,6 +154,7 @@ void App_Init(void)
     Encoder_Init(&hEncoder);
     CarCtrl_Init(&s_car_ctrl, &s_car_drv, &s_car_cfg);
     HWT101_init(&huart2);
+    ESP8266_App_Init(&huart5);
     HAL_TIM_Base_Start_IT(&htim1);
 
     OLED_ShowString(1, 1, "Speed PID Ctrl  ");
@@ -161,35 +166,85 @@ void App_Init(void)
 void App_Update(void)
 {
     HWT101_Update();
+    ESP8266_App_Run();
 
-    /* 按钮逐档切换目标转速：0 → 0.5 → 1.0 → 1.5 → 2.0 → 2.5 → 0 → ... */
+    /* 路口状态（函数级，各子块均可访问） */
+    static int8_t  s_turn_dirs[2] = {0, 0};
+    static uint8_t s_cross_index  = 0;
+    static uint8_t cross_armed    = 1;
+    static uint8_t was_turning    = 0;
+    static uint8_t cross_clear    = 1;
+    static uint8_t s_esp_started  = 0;  /* ESP8266 启动锁，终点后重置允许重新接收指令 */
+
+    /* ESP8266 收到指令后自动启动循迹 */
+    {
+        ESP8266_CommandState cmd;
+        if (!s_esp_started && ESP8266_App_PopCommand(&cmd))
+        {
+            ESP8266_App_DecodeDirs(cmd, &s_turn_dirs[0], &s_turn_dirs[1]);
+            s_cross_index = 0;
+            cross_armed   = 1;
+            was_turning   = 0;
+            cross_clear   = 1;
+            target_rps = ESP8266_START_RPS;
+            s_car_ctrl.set_speed(target_rps);
+            s_car_ctrl.set_mode(CAR_MODE_TRACK);
+            s_esp_started = 1;
+        }
+    }
+
+    /* 按钮手动调速（兼容调试模式） */
     if (Button_CheckToggleRequest())
     {
         static uint8_t step = 0;
         step = (step + 1) % RPS_STEPS_LEN;
         target_rps = RPS_STEPS[step];
+        if (step == 1) {
+            /* 从停止启动，设置默认路线 A1（第一路口左转，第二路口右转） */
+            s_turn_dirs[0] = -1;
+            s_turn_dirs[1] = +1;
+            s_cross_index  = 0;
+            cross_armed    = 1;
+            was_turning    = 0;
+            cross_clear    = 1;
+        }
         s_car_ctrl.set_speed(target_rps);
         s_car_ctrl.set_mode(target_rps == 0.0f ? CAR_MODE_STOP : CAR_MODE_TRACK);
     }
 
-    /* 路口检测：四路全黑时触发 90° 右转
-     * cross_armed 防重入：触发后锁定，转弯完成（mode 离开 TURN）后立即解锁
-     * 不依赖传感器离开全黑区，高速连续路口也能正常响应 */
+    /* 路口 + 终点检测 */
     {
-        static uint8_t cross_armed  = 1;
-        static uint8_t was_turning  = 0;
         int all_black = Track_IsAllBlack();
         CarMode_t mode = s_car_ctrl.get_mode();
 
-        /* 转弯刚完成（TURN → 其他）时立即解锁 */
         if (was_turning && mode != CAR_MODE_TURN) {
             cross_armed = 1;
+            cross_clear = 0;  /* 等待离开当前路口区域 */
         }
         was_turning = (mode == CAR_MODE_TURN);
 
-        if (all_black && cross_armed) {
-            s_car_ctrl.start_turn(+1);
-            cross_armed = 0;
+        if (!all_black) cross_clear = 1;
+
+        if (all_black && cross_armed && cross_clear)
+        {
+            if (s_cross_index < 2) {
+                /* 路口：按方向转弯或直行 */
+                int8_t dir = s_turn_dirs[s_cross_index];
+                s_cross_index++;
+                cross_armed = 0;
+                if (dir != 0) {
+                    s_car_ctrl.start_turn(dir);
+                } else {
+                    /* 直行过路口：was_turning 不会触发，手动重新上锁 */
+                    cross_armed = 1;
+                    cross_clear = 0;
+                }
+            } else {
+                /* 终点：两个路口均已通过，停车并解锁 ESP8266 允许接收下一条指令 */
+                s_car_ctrl.set_mode(CAR_MODE_STOP);
+                cross_armed   = 0;
+                s_esp_started = 0;
+            }
         }
     }
 
@@ -236,6 +291,11 @@ void App_Update(void)
                 default:                mode_str = "Mode: ???       "; break;
             }
             OLED_ShowString(3, 1, mode_str);
+
+            snprintf(disp_buf, sizeof(disp_buf), "ESP:%s%s         ",
+                     ESP8266_App_IsReady() ? "" : "init ",
+                     ESP8266_App_GetStateName());
+            OLED_ShowString(4, 1, disp_buf);
         }
     }
 }

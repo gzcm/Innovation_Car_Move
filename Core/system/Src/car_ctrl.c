@@ -20,7 +20,7 @@
 #include "tracker.h"
 
 /* ---------- 转弯参数 ---------- */
-#define TURN_DONE_DEG   5.0f    /* 角度误差小于此值视为转弯完成 */
+#define TURN_DONE_DEG   2.0f    /* 角度误差小于此值视为转弯完成 */
 
 /* ---------- 辅助宏 ---------- */
 #define FABS(x)  ((x) < 0.0f ? -(x) : (x))
