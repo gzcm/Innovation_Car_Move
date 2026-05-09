@@ -169,12 +169,15 @@ void App_Update(void)
     ESP8266_App_Run();
 
     /* 路口状态（函数级，各子块均可访问） */
-    static int8_t  s_turn_dirs[2] = {0, 0};
-    static uint8_t s_cross_index  = 0;
-    static uint8_t cross_armed    = 1;
-    static uint8_t was_turning    = 0;
-    static uint8_t cross_clear    = 1;
-    static uint8_t s_esp_started  = 0;  /* ESP8266 启动锁，终点后重置允许重新接收指令 */
+    static int8_t  s_turn_dirs[2]    = {0, 0};
+    static int8_t  s_return_dirs[2]  = {0, 0};
+    static uint8_t s_cross_index     = 0;
+    static uint8_t cross_armed       = 1;
+    static uint8_t was_turning       = 0;
+    static uint8_t cross_clear       = 1;
+    static uint8_t s_esp_started     = 0;  /* ESP8266 启动锁，终点后重置允许重新接收指令 */
+    static uint8_t s_returning       = 0;  /* 1 = 已掉头进入返程 */
+    static uint8_t s_return_pending  = 0;  /* 1 = 已触发 180° 掉头，等待完成 */
 
     /* ESP8266 收到指令后自动启动循迹 */
     {
@@ -182,10 +185,12 @@ void App_Update(void)
         if (!s_esp_started && ESP8266_App_PopCommand(&cmd))
         {
             ESP8266_App_DecodeDirs(cmd, &s_turn_dirs[0], &s_turn_dirs[1]);
-            s_cross_index = 0;
-            cross_armed   = 1;
-            was_turning   = 0;
-            cross_clear   = 1;
+            s_cross_index    = 0;
+            cross_armed      = 1;
+            was_turning      = 0;
+            cross_clear      = 1;
+            s_returning      = 0;
+            s_return_pending = 0;
             target_rps = ESP8266_START_RPS;
             s_car_ctrl.set_speed(target_rps);
             s_car_ctrl.set_mode(CAR_MODE_TRACK);
@@ -201,12 +206,14 @@ void App_Update(void)
         target_rps = RPS_STEPS[step];
         if (step == 1) {
             /* 从停止启动，设置默认路线 A1（第一路口左转，第二路口右转） */
-            s_turn_dirs[0] = -1;
-            s_turn_dirs[1] = +1;
-            s_cross_index  = 0;
-            cross_armed    = 1;
-            was_turning    = 0;
-            cross_clear    = 1;
+            s_turn_dirs[0]   = -1;
+            s_turn_dirs[1]   = +1;
+            s_cross_index    = 0;
+            cross_armed      = 1;
+            was_turning      = 0;
+            cross_clear      = 1;
+            s_returning      = 0;
+            s_return_pending = 0;
         }
         s_car_ctrl.set_speed(target_rps);
         s_car_ctrl.set_mode(target_rps == 0.0f ? CAR_MODE_STOP : CAR_MODE_TRACK);
@@ -214,36 +221,78 @@ void App_Update(void)
 
     /* 路口 + 终点检测 */
     {
-        int all_black = Track_IsAllBlack();
-        CarMode_t mode = s_car_ctrl.get_mode();
+        int all_black   = Track_IsAllBlack();
+        int three_black = Track_IsThreeBlack();
+        CarMode_t mode  = s_car_ctrl.get_mode();
 
         if (was_turning && mode != CAR_MODE_TURN) {
             cross_armed = 1;
             cross_clear = 0;  /* 等待离开当前路口区域 */
+
+            /* 180° 掉头完成 → 切换到返程模式 */
+            if (s_return_pending) {
+                s_return_pending = 0;
+                s_returning      = 1;
+                s_cross_index    = 0;
+                /* 镜像前进方向：返程路口顺序与方向均与去程相反 */
+                s_return_dirs[0] = -s_turn_dirs[1];
+                s_return_dirs[1] = -s_turn_dirs[0];
+            }
         }
         was_turning = (mode == CAR_MODE_TURN);
 
-        if (!all_black) cross_clear = 1;
+        /* 离开全黑区域即可重新上锁；3黑也算未离开，避免返程二号路口提前误判清零 */
+        if (!all_black && !three_black) cross_clear = 1;
 
-        if (all_black && cross_armed && cross_clear)
-        {
-            if (s_cross_index < 2) {
-                /* 路口：按方向转弯或直行 */
-                int8_t dir = s_turn_dirs[s_cross_index];
-                s_cross_index++;
-                cross_armed = 0;
-                if (dir != 0) {
-                    s_car_ctrl.start_turn(dir);
+        if (!s_returning) {
+            /* 去程：两个路口 + 终点均以全黑触发 */
+            if (all_black && cross_armed && cross_clear) {
+                if (s_cross_index < 2) {
+                    int8_t dir = s_turn_dirs[s_cross_index];
+                    s_cross_index++;
+                    cross_armed = 0;
+                    if (dir != 0) {
+                        s_car_ctrl.start_turn(dir);
+                    } else {
+                        /* 直行过路口：was_turning 不会触发，手动重新上锁 */
+                        cross_armed = 1;
+                        cross_clear = 0;
+                    }
                 } else {
-                    /* 直行过路口：was_turning 不会触发，手动重新上锁 */
-                    cross_armed = 1;
-                    cross_clear = 0;
+                    /* 终点：触发 180° 掉头，进入返程 */
+                    s_cross_index    = 0;
+                    cross_armed      = 0;
+                    s_return_pending = 1;
+                    s_car_ctrl.start_turn_180();
                 }
+            }
+        } else {
+            /* 返程：一号路口全黑、二号路口 3 黑（含全黑兜底）、出发点全黑停车 */
+            int trigger;
+            if (s_cross_index == 1) {
+                trigger = three_black || all_black;
             } else {
-                /* 终点：两个路口均已通过，停车并解锁 ESP8266 允许接收下一条指令 */
-                s_car_ctrl.set_mode(CAR_MODE_STOP);
-                cross_armed   = 0;
-                s_esp_started = 0;
+                trigger = all_black;
+            }
+
+            if (trigger && cross_armed && cross_clear) {
+                if (s_cross_index < 2) {
+                    int8_t dir = s_return_dirs[s_cross_index];
+                    s_cross_index++;
+                    cross_armed = 0;
+                    if (dir != 0) {
+                        s_car_ctrl.start_turn(dir);
+                    } else {
+                        cross_armed = 1;
+                        cross_clear = 0;
+                    }
+                } else {
+                    /* 抵达出发点，停车并解锁 ESP8266 */
+                    s_car_ctrl.set_mode(CAR_MODE_STOP);
+                    cross_armed   = 0;
+                    s_returning   = 0;
+                    s_esp_started = 0;
+                }
             }
         }
     }
@@ -282,15 +331,19 @@ void App_Update(void)
             snprintf(disp_buf, sizeof(disp_buf), "Yaw:%+7.1f deg  ", (double)imu->yaw);
             OLED_ShowString(2, 1, disp_buf);
 
-            const char *mode_str;
-            switch (s_car_ctrl.get_mode()) {
-                case CAR_MODE_STOP:     mode_str = "Mode: STOP      "; break;
-                case CAR_MODE_STRAIGHT: mode_str = "Mode: STRAIGHT  "; break;
-                case CAR_MODE_TRACK:    mode_str = "Mode: TRACK     "; break;
-                case CAR_MODE_TURN:     mode_str = "Mode: TURNING   "; break;
-                default:                mode_str = "Mode: ???       "; break;
-            }
-            OLED_ShowString(3, 1, mode_str);
+            /* 调试行：模式 + 路口序号 + 上次转弯目标角度
+             * 格式：M<mode> i:<idx> t:<target>
+             *   mode: 0=STOP 1=STR 2=TRK 3=TURN
+             *   idx : 当前 s_cross_index（去程 0/1/2，返程同样从 0 起）
+             *   t   : start_turn / start_turn_180 设的目标 yaw（°）
+             */
+            CarCtrl_Diag_t diag_dbg;
+            s_car_ctrl.get_diag(&diag_dbg);
+            snprintf(disp_buf, sizeof(disp_buf), "M%d i:%d t:%+04d   ",
+                     (int)s_car_ctrl.get_mode(),
+                     (int)s_cross_index,
+                     (int)diag_dbg.turn_target);
+            OLED_ShowString(3, 1, disp_buf);
 
             snprintf(disp_buf, sizeof(disp_buf), "ESP:%s%s         ",
                      ESP8266_App_IsReady() ? "" : "init ",

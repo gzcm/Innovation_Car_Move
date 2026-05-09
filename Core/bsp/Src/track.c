@@ -66,5 +66,13 @@ float Track_GetPosition(void)
 int Track_IsAllBlack(void)
 {
     Track_Data d = Track_Read();
-    return d.raw[0] && d.raw[1] && d.raw[2] && d.raw[3];
+    int count = d.raw[0] + d.raw[1] + d.raw[2] + d.raw[3];
+    return count >= TRACK_ALLBLACK_MIN;
+}
+
+int Track_IsThreeBlack(void)
+{
+    Track_Data d = Track_Read();
+    int count = d.raw[0] + d.raw[1] + d.raw[2] + d.raw[3];
+    return (count == 3);
 }

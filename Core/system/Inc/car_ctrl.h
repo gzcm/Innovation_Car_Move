@@ -51,6 +51,7 @@ typedef struct {
     float speed_right;
     float pwm_left;
     float pwm_right;
+    float turn_target;     /* 当前/上一次转弯目标 yaw 角度（°），调试用 */
 } CarCtrl_Diag_t;
 
 /* 整车控制对象，Init 后通过此结构体调用所有接口 */
@@ -60,6 +61,7 @@ typedef struct {
     void       (*update)(void);                 /* 在定时器 ISR 中调用 */
     void       (*get_diag)(CarCtrl_Diag_t *out);
     void       (*start_turn)(int8_t dir);       /* 触发路口转弯：+1 右转，-1 左转 */
+    void       (*start_turn_180)(void);         /* 触发 180° 掉头 */
     CarMode_t  (*get_mode)(void);               /* 读取当前运行模式 */
 } CarCtrl_t;
 
