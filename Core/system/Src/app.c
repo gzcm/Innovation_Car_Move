@@ -49,7 +49,7 @@ static const float RPS_STEPS[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f };
 #define RPS_STEPS_LEN  (sizeof(RPS_STEPS) / sizeof(RPS_STEPS[0]))
 
 /* ESP8266 指令触发时的起步速度 */
-#define ESP8266_START_RPS  (0.75f)
+#define ESP8266_START_RPS  (0.65f)
 
 /* ---------- 硬件句柄 ---------- */
 static TB6612_HandleTypeDef hTB6612 = {
